@@ -1,163 +1,121 @@
-const fs = require('fs');
 const path = require('path');
-const { mkdir, rm } = require('fs/promises');
+const { copyFile, mkdir, readdir, rm } = require('fs/promises');
+const { createReadStream, createWriteStream, readFile } = require('fs');
 
-const pathStyles = path.join(__dirname, 'styles');
-const pathCopy = path.join(__dirname, 'project-dist');
-const pathAssetsCopy = path.join(pathCopy, 'assets');
-const folderPath = path.join(__dirname, 'components');
-const pathAssets = path.join(__dirname, 'assets');
-const pathTemplate = path.join(__dirname, 'template.html');
-const pathIndex = path.join(pathCopy, 'index.html');
+async function createAssets(src, dest) {
+  try {
+    const entries = await readdir(src, { withFileTypes : true });
 
-//func for create index.html
-const createTemplate = async() => {
-  await fs.copyFile(pathTemplate, pathIndex, async(error) => {
-    if (error) {
-      console.log(error);
-      throw error;
-    }
-    
-    await fs.readFile(pathIndex, 'utf8', async(error2, data) => {
-      if (error2) {
-        console.log(error2);
-        throw error2;
+    await mkdir(dest);  
+
+    for(let entry of entries) {
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+
+      if(entry.isDirectory()) {
+        await createAssets(srcPath, destPath);
+      } else {
+        await copyFile(srcPath, destPath);
       }
-
-      await fs.readdir(folderPath, {withFileTypes: true}, (error3, files) => {
-        if (error3) {
-          console.log(error3);
-          throw error3;
-        }
-  
-        for (const file of files) {
-          fs.readFile(path.join(folderPath, file.name), 'utf8', (error4, dataFile) => {
-            if (error4) {
-              console.log(error4);
-              throw error4;
-            }
-
-            const tagName = `{{${file.name.split('.')[0]}}}`;
-            data = data.replace(tagName, dataFile);
-
-            fs.writeFile(pathIndex, data, error5 => {
-              if (error5) {
-                console.log(error5);
-              }
-            });
-          });
-        }
-      });
-  
-    });
-  });
-};
-
-//func for recursive copy files 
-const deepCopy = async(dir, end) => {
-  await fs.readdir(dir, {withFileTypes: true}, (error, files) => {
-    if(error) {
-      console.log(error);
-      throw error;
     }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function createCSS() {
+  try {
+    const src = path.join(__dirname, 'styles');
+    const dist = path.join(__dirname, 'project-dist', 'style.css');
+
+    const files = await readdir(src.toString(), {withFileTypes: true});
 
     for (const file of files) {
-      if (!file.isFile()) {
-        fs.stat(path.join(end, file.name), (error) => {
-          if (error) {
-            fs.mkdir(path.join(end, file.name), (error2) => {
-              if (error2) {
-                return console.log(error2);
-              }
-              deepCopy(path.join(dir, file.name), path.join(end, file.name));
-            });
-          } else {
-            deepCopy(path.join(dir, file.name), path.join(end, file.name));
-          }
-        });
-      } else {
-        fs.copyFile(path.join(dir, file.name), path.join(end, file.name), error => {
-          if (error) {
-            console.log(error);
-            throw error;
-          }
-        });
+      if(file.isFile() && path.extname(file.name) == '.css') {
+        let data = '';
+        const stream = createReadStream(path.join(__dirname, 'styles', file.name));
+
+        stream.on('data', chunk => data += chunk);
+        stream.on('end', () => {
+          const writeStream = createWriteStream(dist, { flags: 'a'});
+          writeStream.write(data);
+          writeStream.write('\r');
+        }
+        );
       }
     }
-  });
-};
-
-const run = async () => {
-  try {
-    await mkdir(pathCopy);   
   } catch (error) {
-    if (error.code === 'EEXIST') {
-      await rm(pathCopy, { recursive: true }, (error2) => {
-        if (error2) {
-          console.error(error2);
-        }
+    console.error(error);
+  }
+}
+
+async function createHTML() {
+  try {
+    await readFile(path.join(__dirname, 'template.html'), 'utf8', (error, data) => {
+      if (error) throw error;
+
+      let content = data.toString();
+      const templateNames = getTemplates(content);
+      const componentsPromices = [];
+
+      templateNames.forEach((name) => {
+        componentsPromices.push(
+          new Promise((resolve, reject) => {
+            readFile(path.join(__dirname, 'components', `${name}.html`),'utf-8', (err, innerData) => {
+              if (err) {
+                reject(err); 
+              }
+              else {
+                resolve(innerData);
+              }
+            });
+          })
+        );
       });
-      await mkdir(pathCopy);
+
+      Promise.all(componentsPromices).then(values => {
+        templateNames.forEach((name, index) => {
+          content = content.replace(`{{${name}}}`, values[index]);
+        });
+
+        const writeStream = createWriteStream(path.join(__dirname, 'project-dist', 'index.html'), { flags: 'a'});
+        writeStream.write(content);
+        writeStream.write('\r');
+      });
+    });
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function getTemplates(str) {
+  const templateNames = [];
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] == '{' && str[i + 1] == '{') {
+      const lastPos = str.indexOf('}}', i);
+      templateNames.push(str.slice(i + 2, lastPos));
     }
   }
 
-  // create styles css file dist
-  await fs.readdir(pathStyles, {withFileTypes: true}, async (error, files) => {
-    if (error) {
-      console.log(error);
-      throw error;
+  return templateNames;
+}
+
+async function run() {
+  const assetsSrc = path.join(__dirname, 'assets');
+  const assetsDest = path.join(__dirname, 'project-dist', 'assets');
+  const projectDist = path.join(__dirname, 'project-dist');
+
+  try {
+    await mkdir(projectDist);
+    createAssets(assetsSrc, assetsDest);
+    createCSS();
+    createHTML();
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      await rm(projectDist, { recursive: true });
+      run(); 
     }
-
-    for (const file of files) {
-      const filePath = path.join(pathStyles, file.name);
-
-      if (file.isFile() && path.extname(file.name) == '.css') {
-        fs.readFile(filePath, 'utf8', (error, data) => {
-          if(error) {
-            console.log(error);
-            throw error;
-          }
-
-          const writeStream = fs.createWriteStream(path.join(pathCopy, 'style.css'), { flags: 'a'});
-          writeStream.write(data);
-          writeStream.write('\r');
-        });
-      }
-    }
-  });
-
-  // create index.html
-  await fs.stat(pathCopy, async(error) => {
-    if (error) {
-      await fs.mkdir(pathCopy, async(error2) => {
-        if (error2) {
-          return console.log(error2);
-        }
-        await createTemplate();
-      });
-    } else {
-      await fs.readdir(pathCopy, async(error3) => {
-        if (error3) {
-          return console.log(error3);
-        }
-        await createTemplate();
-      });
-    }
-  });
-
-  // copy dir assets
-  await fs.stat(pathAssetsCopy, async(error) => {
-    if (error) {
-      await fs.mkdir(pathAssetsCopy, async(error2) => {
-        if (error2) {
-          console.log(error2);
-        }
-      });
-      await deepCopy(pathAssets, pathAssetsCopy);
-    } else {
-      await deepCopy(pathAssets, pathAssetsCopy);
-    }
-  });
-};
+  }
+}
 
 run();
