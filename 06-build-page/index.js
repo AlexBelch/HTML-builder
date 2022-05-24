@@ -154,11 +154,10 @@ fs.stat(pathAssetsCopy, error => {
     fs.mkdir(pathAssetsCopy, error2 => {
       if (error2) {
         console.log(error2);
-      }  
+      }
+      deepCopy(pathAssets, pathAssetsCopy);
     });
-
-    deepCopy(pathAssets, pathAssetsCopy);
-  } else {  
+  } else {
     deepCopy(pathAssets, pathAssetsCopy);
   }
 });
