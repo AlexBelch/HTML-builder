@@ -88,15 +88,17 @@ const deepCopy = async(dir, end) => {
 };
 
 const run = async () => {
-  if (!fs.existsSync(pathCopy)) {
-    await mkdir(pathCopy);
-  } else {
-    await rm(pathCopy, { recursive: true }, (err) => {
-      if (err) {
-        console.error(err);
-      }
-    });
-    await mkdir(pathCopy);
+  try {
+    await mkdir(pathCopy);   
+  } catch (error) {
+    if (error.code === 'EEXIST') {
+      await rm(pathCopy, { recursive: true }, (error2) => {
+        if (error2) {
+          console.error(error2);
+        }
+      });
+      await mkdir(pathCopy);
+    }
   }
 
   // create styles css file dist
